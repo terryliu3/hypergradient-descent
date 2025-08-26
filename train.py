@@ -129,7 +129,7 @@ def train(opt, log_func=None):
             data, target = data.cuda(), target.cuda()
         output = model(data)
         loss = F.cross_entropy(output, target)
-        loss = loss.data[0]
+        loss = loss.item()
         break
     valid_loss = 0
     for data, target in valid_loader:
@@ -137,7 +137,7 @@ def train(opt, log_func=None):
         if opt.cuda:
             data, target = data.cuda(), target.cuda()
         output = model(data)
-        valid_loss += F.cross_entropy(output, target, size_average=False).data[0]
+        valid_loss += F.cross_entropy(output, target, size_average=False).item()
     valid_loss /= len(valid_loader.dataset)
     if log_func is not None:
         log_func(0, 0, 0, loss, loss, valid_loss, opt.alpha_0, opt.alpha_0, opt.beta)
@@ -159,7 +159,7 @@ def train(opt, log_func=None):
             loss = F.cross_entropy(output, target)
             loss.backward()
             optimizer.step()
-            loss = loss.data[0]
+            loss = loss.item()
             loss_epoch += loss
             alpha = optimizer.param_groups[0]['lr']
             alpha_epoch += alpha
@@ -185,7 +185,7 @@ def train(opt, log_func=None):
                     if opt.cuda:
                         data, target = data.cuda(), target.cuda()
                     output = model(data)
-                    valid_loss += F.cross_entropy(output, target, size_average=False).data[0]
+                    valid_loss += F.cross_entropy(output, target, size_average=False).item()
                 valid_loss /= len(valid_loader.dataset)
                 if log_func is not None:
                     log_func(epoch, iteration, time.time() - time_start, loss, loss_epoch, valid_loss, alpha, alpha_epoch, opt.beta)
