@@ -9,7 +9,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
-from mpl_toolkits.axes_grid.inset_locator import inset_axes
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 colorblindbright = [(252,145,100),(188,56,119),(114,27,166)]
 colorblinddim    = [(213,167,103),(163,85,114),(104,59,130)]
