@@ -8,7 +8,6 @@ import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 from torchvision import datasets, transforms
 import vgg
 from torch.utils.data import DataLoader
@@ -123,22 +122,20 @@ def train(opt, log_func=None):
         print('Task: {}, Model: {}, Method: {}'.format(task, opt.model, opt.method))
 
     model.eval()
-    for batch_id, (data, target) in enumerate(train_loader):
-        data, target = Variable(data), Variable(target)
-        if opt.cuda:
-            data, target = data.cuda(), target.cuda()
-        output = model(data)
-        loss = F.cross_entropy(output, target)
-        loss = loss.item()
-        break
-    valid_loss = 0
-    for data, target in valid_loader:
-        data, target = Variable(data, volatile=True), Variable(target)
-        if opt.cuda:
-            data, target = data.cuda(), target.cuda()
-        output = model(data)
-        valid_loss += F.cross_entropy(output, target, size_average=False).item()
-    valid_loss /= len(valid_loader.dataset)
+    with torch.no_grad():
+        for batch_id, (data, target) in enumerate(train_loader):
+            if opt.cuda:
+                data, target = data.cuda(), target.cuda()
+            output = model(data)
+            loss = F.cross_entropy(output, target).item()
+            break
+        valid_loss = 0
+        for data, target in valid_loader:
+            if opt.cuda:
+                data, target = data.cuda(), target.cuda()
+            output = model(data)
+            valid_loss += F.cross_entropy(output, target, reduction='sum').item()
+        valid_loss /= len(valid_loader.dataset)
     if log_func is not None:
         log_func(0, 0, 0, loss, loss, valid_loss, opt.alpha_0, opt.alpha_0, opt.beta)
 
@@ -151,7 +148,6 @@ def train(opt, log_func=None):
         loss_epoch = 0
         alpha_epoch = 0
         for batch_id, (data, target) in enumerate(train_loader):
-            data, target = Variable(data), Variable(target)
             if opt.cuda:
                 data, target = data.cuda(), target.cuda()
             optimizer.zero_grad()
@@ -180,13 +176,13 @@ def train(opt, log_func=None):
                 alpha_epoch /= len(train_loader)
                 model.eval()
                 valid_loss = 0
-                for data, target in valid_loader:
-                    data, target = Variable(data, volatile=True), Variable(target)
-                    if opt.cuda:
-                        data, target = data.cuda(), target.cuda()
-                    output = model(data)
-                    valid_loss += F.cross_entropy(output, target, size_average=False).item()
-                valid_loss /= len(valid_loader.dataset)
+                with torch.no_grad():
+                    for data, target in valid_loader:
+                        if opt.cuda:
+                            data, target = data.cuda(), target.cuda()
+                        output = model(data)
+                        valid_loss += F.cross_entropy(output, target, reduction='sum').item()
+                    valid_loss /= len(valid_loader.dataset)
                 if log_func is not None:
                     log_func(epoch, iteration, time.time() - time_start, loss, loss_epoch, valid_loss, alpha, alpha_epoch, opt.beta)
             else:

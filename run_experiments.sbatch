@@ -26,7 +26,7 @@
 # This section might need changes depending on your cluster's configuration.
 echo "Setting up environment..."
 module purge
-source /ibex/user/liut0c/opt/miniforge3/bin/activate # Activate your Python virtual environment
+# source /ibex/user/liut0c/opt/miniforge3/bin/activate # Activate your Python virtual environment
 mamba activate hypergrad
 module load cuda
 
