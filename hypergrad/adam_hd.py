@@ -21,7 +21,7 @@ class AdamHD(Optimizer):
         tuning of the learning rate, introduced in the paper
         `Online Learning Rate Adaptation with Hypergradient Descent`_
 
-    .. _Adam\: A Method for Stochastic Optimization:
+    .. _Adam: A Method for Stochastic Optimization:
         https://arxiv.org/abs/1412.6980
     .. _Online Learning Rate Adaptation with Hypergradient Descent:
         https://openreview.net/forum?id=BkrsAzWAb
