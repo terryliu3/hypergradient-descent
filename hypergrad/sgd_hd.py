@@ -122,7 +122,7 @@ class SGDHD(Optimizer):
         # Hypergradient for SGD
         h = torch.dot(grad, grad_prev)
         # Hypergradient descent of the learning rate:
-        group['lr'] += group['hypergrad_lr'] * h
+        group['lr'] += group['hypergrad_lr'] * h.item()
 
         if momentum != 0:
             if 'momentum_buffer' not in state:
