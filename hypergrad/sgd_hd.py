@@ -77,7 +77,7 @@ class SGDHD(Optimizer):
             else:
                 view = p.grad.data.view(-1)
             if weight_decay != 0:
-                view.add_(weight_decay, p.data.view(-1))
+                view.add_(p.data.view(-1), alpha=weight_decay)
             views.append(view)
         return torch.cat(views, 0)
 
@@ -86,7 +86,7 @@ class SGDHD(Optimizer):
         for p in self._params:
             numel = p.numel()
             # view as to avoid deprecated pointwise semantics
-            p.data.add_(step_size, update[offset:offset + numel].view_as(p.data))
+            p.data.add_(update[offset:offset + numel].view_as(p.data), alpha=step_size)
             offset += numel
         assert offset == self._params_numel
 
@@ -130,9 +130,9 @@ class SGDHD(Optimizer):
                 buf.mul_(momentum).add_(grad)
             else:
                 buf = state['momentum_buffer']
-                buf.mul_(momentum).add_(1 - dampening, grad)
+                buf.mul_(momentum).add_(grad, alpha=1 - dampening)
             if nesterov:
-                grad.add_(momentum, buf)
+                grad.add_(buf, alpha=momentum)
             else:
                 grad = buf
 
