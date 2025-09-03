@@ -17,7 +17,7 @@ class AdamHD(Optimizer):
         eps (float, optional): term added to the denominator to improve
             numerical stability (default: 1e-8)
         weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
-        hypergrad_lr (float, optional): hypergradient learning rate for the online
+        wealth (float, optional): hypergradient learning rate for the online
         tuning of the learning rate, introduced in the paper
         `Online Learning Rate Adaptation with Hypergradient Descent`_
 
@@ -28,11 +28,12 @@ class AdamHD(Optimizer):
     """
 
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
-                 weight_decay=0, hypergrad_lr=1e-8):
+                 weight_decay=0, wealth=1e-8):
         defaults = dict(lr=lr, betas=betas, eps=eps,
-                        weight_decay=weight_decay, hypergrad_lr=hypergrad_lr)
+                        weight_decay=weight_decay, wealth=wealth)
         super(AdamHD, self).__init__(params, defaults)
 
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -57,6 +58,10 @@ class AdamHD(Optimizer):
                 # State initialization
                 if len(state) == 0:
                     state['step'] = 0
+                    # Keep a copy of the very first learning rate
+                    state['lr0'] = group['lr']              
+                    state['wealth'] = group['wealth']
+                    state['sum_of_hypergrads'] = 0.0 
                     # Exponential moving average of gradient values
                     state['exp_avg'] = torch.zeros_like(p.data)
                     # Exponential moving average of squared gradient values
@@ -74,10 +79,14 @@ class AdamHD(Optimizer):
                     prev_bias_correction1 = 1 - beta1 ** (state['step'] - 1)
                     prev_bias_correction2 = 1 - beta2 ** (state['step'] - 1)
                     # Hypergradient for Adam:
-                    h = torch.dot(grad.view(-1), torch.div(exp_avg, exp_avg_sq.sqrt().add_(group['eps'])).view(-1)) * math.sqrt(prev_bias_correction2) / prev_bias_correction1
-                    # Hypergradient descent of the learning rate:
-                    group['lr'] += group['hypergrad_lr'] * h.item()
-
+                    h = torch.dot(grad.view(-1), torch.div(exp_avg, exp_avg_sq.sqrt().add_(group['eps'])).view(-1)) * math.sqrt(prev_bias_correction2) / prev_bias_correction1                    
+                    # Update dual vector
+                    state['sum_of_hypergrads'] += h.item()
+                    # Update wealth
+                    state['wealth'] += -h * (group['lr'] - state['lr0'])
+                    # Update learning rate
+                    group['lr'] = (state['wealth'] * (-state['sum_of_hypergrads']) / state['step'] + state['lr0'])
+                    
                 # Decay the first and second moment running average coefficient
                 exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
                 exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
