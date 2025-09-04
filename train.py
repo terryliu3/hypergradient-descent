@@ -12,7 +12,7 @@ from torchvision import datasets, transforms
 import vgg
 from torch.utils.data import DataLoader
 from torch.optim import SGD, Adam
-from hypergrad import SGDHD, AdamHD
+from hypergrad import SGDHD, AdamHD, SGDHDKT, AdamHDKT
 
 
 class LogReg(nn.Module):
@@ -107,14 +107,20 @@ def train(opt, log_func=None):
         optimizer = SGD(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay)
     elif opt.method == 'sgd_hd':
         optimizer = SGDHD(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, hypergrad_lr=opt.beta)
+    elif opt.method == 'sgd_hd_kt':
+        optimizer = SGDHDKT(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, wealth=opt.beta)
     elif opt.method == 'sgdn':
         optimizer = SGD(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, momentum=opt.mu, nesterov=True)
     elif opt.method == 'sgdn_hd':
         optimizer = SGDHD(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, momentum=opt.mu, nesterov=True, hypergrad_lr=opt.beta)
+    elif opt.method == 'sgdn_hd_kt':
+        optimizer = SGDHDKT(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay,momentum=opt.mu, nesterov=True, wealth=opt.beta)
     elif opt.method == 'adam':
         optimizer = Adam(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay)
     elif opt.method == 'adam_hd':
         optimizer = AdamHD(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, hypergrad_lr=opt.beta)
+    elif opt.method == 'adam_hd_kt':
+        optimizer = AdamHDKT(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, wealth=opt.beta)
     else:
         raise Exception('Unknown method: {}'.format(opt.method))
 
@@ -218,6 +224,7 @@ def main():
         parser.add_argument('--workers', help='number of data loading workers', default=4, type=int)
         parser.add_argument('--parallel', help='parallelize', action='store_true')
         parser.add_argument('--save', help='do not save output to file', action='store_true')
+
         opt = parser.parse_args()
 
         torch.manual_seed(opt.seed)
