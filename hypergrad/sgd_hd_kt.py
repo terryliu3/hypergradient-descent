@@ -124,13 +124,13 @@ class SGDHDKT(Optimizer):
         self._step += 1
         grad_prev = state['grad_prev']
         # Hypergradient for SGD
-        hypergrad = -torch.dot(grad, grad_prev)
+        group['hypergrad'] = -torch.dot(grad, grad_prev).item()
         # Normalization
-        normalized_hypergrad = hypergrad / (grad.norm() * grad_prev.norm() + 1e-12)
+        group['normalized_hypergrad'] = (group['hypergrad'] / (grad.norm() * grad_prev.norm() + 1e-12)).item()
         # Update dual vector
-        self._sum_of_normalized_hypergrads += normalized_hypergrad.item()
+        self._sum_of_normalized_hypergrads += group['normalized_hypergrad']
         # Update wealth
-        group['wealth'] += -normalized_hypergrad.item() * (group['lr'] - self._lr0)
+        group['wealth'] += -group['normalized_hypergrad'] * (group['lr'] - self._lr0)
         # Update learning rate
         group['lr'] = group['wealth'] * (-self._sum_of_normalized_hypergrads) / self._step + self._lr0
 

@@ -52,9 +52,9 @@ class AdamHDKT(Optimizer):
 
         for group in self.param_groups:
             # Global initialization
-            hypergrad = 0.0
-            squared_norm_u = 0.0
-            squared_norm_v = 0.0
+            group['hypergrad'] = 0.0
+            group['squared_norm_u'] = 0.0
+            group['squared_norm_v'] = 0.0
             
             self._step += 1
             for p in group['params']:
@@ -87,9 +87,9 @@ class AdamHDKT(Optimizer):
                     u = grad.view(-1)
                     v = torch.div(exp_avg, exp_avg_sq.sqrt().add_(group['eps'])).view(-1) * math.sqrt(prev_bias_correction2) / prev_bias_correction1
                     h = -torch.dot(u, v) 
-                    hypergrad += h.item()
-                    squared_norm_u += (u.norm()**2).item()
-                    squared_norm_v += (v.norm()**2).item()
+                    group['hypergrad'] += h.item()
+                    group['squared_norm_u'] += (u.norm()**2).item()
+                    group['squared_norm_v'] += (v.norm()**2).item()
                     # # Update dual vector
                     # state['sum_of_hypergrads'] += h.item()
                     # # Update wealth
@@ -109,11 +109,12 @@ class AdamHDKT(Optimizer):
                 p.data.addcdiv_(exp_avg, denom, value=-step_size)
             
             if self._step > 1:
+                group['normalized_hypergrad'] = group['hypergrad'] / math.sqrt(group['squared_norm_u'] * group['squared_norm_v'] + 1e-12)
                 # Update dual vector
-                normalized_hypergrad = hypergrad / math.sqrt(squared_norm_u * squared_norm_v + 1e-12)
-                self._sum_of_normalized_hypergrads += normalized_hypergrad
+
+                self._sum_of_normalized_hypergrads += group['normalized_hypergrad']
                 # Update wealth
-                group['wealth'] += -normalized_hypergrad * (group['lr'] - self._lr0)
+                group['wealth'] += -group['normalized_hypergrad'] * (group['lr'] - self._lr0)
                 # Update learning rate
                 group['lr'] = group['wealth'] * (-self._sum_of_normalized_hypergrads) / self._step + self._lr0
                 
