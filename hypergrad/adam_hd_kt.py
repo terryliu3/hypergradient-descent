@@ -33,10 +33,8 @@ class AdamHDKT(Optimizer):
                         weight_decay=weight_decay, wealth=wealth)
         super(AdamHDKT, self).__init__(params, defaults)
         
-        self._step = 0
-        # Keep a copy of the very first learning rate
-        self._lr0 = lr
-        self._sum_of_normalized_hypergrads = 0.0
+        if len(self.param_groups) != 1:
+            raise ValueError("ADAMHDKT doesn't support per-parameter options (parameter groups)")
         
     @torch.no_grad()
     def step(self, closure=None):
@@ -49,73 +47,71 @@ class AdamHDKT(Optimizer):
         loss = None
         if closure is not None:
             loss = closure()
-
-        for group in self.param_groups:
-            # Global initialization
+        group = self.param_groups[0]
+        
+        # Global initialization
+        group = self.param_groups[0]
+        if 'step' not in group:
+            group['step'] = 0  
+            group['lr0'] = group['lr']
+            group['sum_of_normalized_hypergrads'] = 0.0
             group['hypergrad'] = 0.0
             group['squared_norm_u'] = 0.0
             group['squared_norm_v'] = 0.0
-            
-            self._step += 1
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-                grad = p.grad.data
-                if grad.is_sparse:
-                    raise RuntimeError('Adam does not support sparse gradients, please consider SparseAdam instead')
+        group['step'] += 1
+        group['normalized_hypergrad'] = group['hypergrad'] / math.sqrt(group['squared_norm_u'] * group['squared_norm_v'] + 1e-12)
+        # Update dual vector
+        group['sum_of_normalized_hypergrads'] += group['normalized_hypergrad']
+        # Update wealth
+        group['wealth'] += -group['normalized_hypergrad'] * (group['lr'] - group['lr0'])
+        # Update learning rate
+        group['lr'] = group['wealth'] * (-group['sum_of_normalized_hypergrads']) / group['step'] + group['lr0']
+        
+        # Reset hypergradient accumulators
+        group['hypergrad'] = 0.0
+        group['squared_norm_u'] = 0.0
+        group['squared_norm_v'] = 0.0
+        for p in group['params']:
+            if p.grad is None:
+                continue
+            grad = p.grad.data
+            if grad.is_sparse:
+                raise RuntimeError('Adam does not support sparse gradients, please consider SparseAdam instead')
 
-                state = self.state[p]
+            state = self.state[p]
 
-                # State initialization
-                if len(state) == 0:
-                    state['step'] = 0
-                    # Exponential moving average of gradient values
-                    state['exp_avg'] = torch.zeros_like(p.data)
-                    # Exponential moving average of squared gradient values
-                    state['exp_avg_sq'] = torch.zeros_like(p.data)
+            # State initialization
+            if len(state) == 0:
+                # Exponential moving average of gradient values
+                state['exp_avg'] = torch.zeros_like(p.data)
+                # Exponential moving average of squared gradient values
+                state['exp_avg_sq'] = torch.zeros_like(p.data)
 
-                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-                beta1, beta2 = group['betas']
+            exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
+            beta1, beta2 = group['betas']
 
-                if group['weight_decay'] != 0:
-                    grad = grad.add(p.data, alpha=group['weight_decay'])
+            if group['weight_decay'] != 0:
+                grad = grad.add(p.data, alpha=group['weight_decay'])
 
-                if self._step > 1:
-                    prev_bias_correction1 = 1 - beta1 ** (self._step - 1)
-                    prev_bias_correction2 = 1 - beta2 ** (self._step - 1)
-                    # Hypergradient for Adam:
-                    u = grad.view(-1)
-                    v = torch.div(exp_avg, exp_avg_sq.sqrt().add_(group['eps'])).view(-1) * math.sqrt(prev_bias_correction2) / prev_bias_correction1
-                    h = -torch.dot(u, v) 
-                    group['hypergrad'] += h.item()
-                    group['squared_norm_u'] += (u.norm()**2).item()
-                    group['squared_norm_v'] += (v.norm()**2).item()
-                    # # Update dual vector
-                    # state['sum_of_hypergrads'] += h.item()
-                    # # Update wealth
-                    # state['wealth'] += -h.item() * (group['lr'] - state['lr0'])
-                    # # Update learning rate
-                    # group['lr'] = state['wealth'] * (-state['sum_of_hypergrads']) / state['step'] + state['lr0']
-                    
-                # Decay the first and second moment running average coefficient
-                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
-                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
-                denom = exp_avg_sq.sqrt().add_(group['eps'])
+            prev_bias_correction1 = 1 - beta1 ** (group['step'] - 1)
+            prev_bias_correction2 = 1 - beta2 ** (group['step'] - 1)
+            # Hypergradient for Adam:
+            u = grad.view(-1)
+            v = torch.div(exp_avg, exp_avg_sq.sqrt().add_(group['eps'])).view(-1) * math.sqrt(prev_bias_correction2) / (prev_bias_correction1 + group['eps'])
+            h = -torch.dot(u, v) 
+            group['hypergrad'] += h.item()
+            group['squared_norm_u'] += (u.norm()**2).item()
+            group['squared_norm_v'] += (v.norm()**2).item()
 
-                bias_correction1 = 1 - beta1 ** self._step
-                bias_correction2 = 1 - beta2 ** self._step
-                step_size = group['lr'] * math.sqrt(bias_correction2) / bias_correction1
+            # Decay the first and second moment running average coefficient
+            exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+            exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+            denom = exp_avg_sq.sqrt().add_(group['eps'])
 
-                p.data.addcdiv_(exp_avg, denom, value=-step_size)
-            
-            if self._step > 1:
-                group['normalized_hypergrad'] = group['hypergrad'] / math.sqrt(group['squared_norm_u'] * group['squared_norm_v'] + 1e-12)
-                # Update dual vector
+            bias_correction1 = 1 - beta1 ** group['step']
+            bias_correction2 = 1 - beta2 ** group['step']
+            step_size = group['lr'] * math.sqrt(bias_correction2) / bias_correction1
 
-                self._sum_of_normalized_hypergrads += group['normalized_hypergrad']
-                # Update wealth
-                group['wealth'] += -group['normalized_hypergrad'] * (group['lr'] - self._lr0)
-                # Update learning rate
-                group['lr'] = group['wealth'] * (-self._sum_of_normalized_hypergrads) / self._step + self._lr0
-                
+            p.data.addcdiv_(exp_avg, denom, value=-step_size)
+        
         return loss

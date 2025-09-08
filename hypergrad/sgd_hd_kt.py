@@ -62,13 +62,10 @@ class SGDHDKT(Optimizer):
         super(SGDHDKT, self).__init__(params, defaults)
 
         if len(self.param_groups) != 1:
-            raise ValueError("SGDHD doesn't support per-parameter options (parameter groups)")
+            raise ValueError("SGDHDKT doesn't support per-parameter options (parameter groups)")
 
         self._params = self.param_groups[0]['params']
         self._params_numel = reduce(lambda total, p: total + p.numel(), self._params, 0)
-        self._step = 0
-        self._lr0 = lr
-        self._sum_of_normalized_hypergrads = 0.0
         
     def _gather_flat_grad_with_weight_decay(self, weight_decay=0):
         views = []
@@ -116,38 +113,42 @@ class SGDHDKT(Optimizer):
 
         # NOTE: SGDHD has only global state, but we register it as state for
         # the first param, because this helps with casting in load_state_dict
-        state = self.state[self._params[0]]
+        # state = self.state[self._params[0]]
         # State initialization
-        if len(state) == 0:
-            state['grad_prev'] = torch.zeros_like(grad)
-
-        self._step += 1
-        grad_prev = state['grad_prev']
+        if 'step' not in group:
+            group['step'] = 0
+            group['lr0'] = group['lr']
+            group['grad_prev'] = torch.zeros_like(grad)
+            group['sum_of_normalized_hypergrads'] = 0.0
+    
+        group['step'] += 1
+        grad_prev = group['grad_prev']
         # Hypergradient for SGD
         group['hypergrad'] = -torch.dot(grad, grad_prev).item()
         # Normalization
         group['normalized_hypergrad'] = (group['hypergrad'] / (grad.norm() * grad_prev.norm() + 1e-12)).item()
         # Update dual vector
-        self._sum_of_normalized_hypergrads += group['normalized_hypergrad']
+        group['sum_of_normalized_hypergrads'] += group['normalized_hypergrad']
         # Update wealth
-        group['wealth'] += -group['normalized_hypergrad'] * (group['lr'] - self._lr0)
+        group['wealth'] += -group['normalized_hypergrad'] * (group['lr'] - group['lr0'])
         # Update learning rate
-        group['lr'] = group['wealth'] * (-self._sum_of_normalized_hypergrads) / self._step + self._lr0
+        group['lr'] = group['wealth'] * (-group['sum_of_normalized_hypergrads']) / group['step'] + group['lr0']
 
         if momentum != 0:
-            if 'momentum_buffer' not in state:
-                buf = state['momentum_buffer'] = torch.zeros_like(grad)
+            if 'momentum_buffer' not in group:
+                buf = group['momentum_buffer'] = torch.zeros_like(grad)
                 buf.mul_(momentum).add_(grad)
             else:
-                buf = state['momentum_buffer']
+                buf = group['momentum_buffer']
                 buf.mul_(momentum).add_(grad, alpha=1 - dampening)
             if nesterov:
                 grad.add_(buf, alpha=momentum)
             else:
                 grad = buf
 
-        state['grad_prev'] = grad
+        group['grad_prev'] = grad
 
         self._add_grad(-group['lr'], grad)
 
         return loss
+

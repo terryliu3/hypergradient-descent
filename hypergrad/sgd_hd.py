@@ -66,7 +66,7 @@ class SGDHD(Optimizer):
 
         self._params = self.param_groups[0]['params']
         self._params_numel = reduce(lambda total, p: total + p.numel(), self._params, 0)
-
+        
     def _gather_flat_grad_with_weight_decay(self, weight_decay=0):
         views = []
         for p in self._params:
@@ -113,30 +113,33 @@ class SGDHD(Optimizer):
 
         # NOTE: SGDHD has only global state, but we register it as state for
         # the first param, because this helps with casting in load_state_dict
-        state = self.state[self._params[0]]
+        # state = self.state[self._params[0]]
         # State initialization
-        if len(state) == 0:
-            state['grad_prev'] = torch.zeros_like(grad)
+        if 'grad_prev' not in group:
+            group['grad_prev'] = torch.zeros_like(grad)
 
-        grad_prev = state['grad_prev']
+        grad_prev = group['grad_prev']
+
         # Hypergradient for SGD
-        h = torch.dot(grad, grad_prev)
+        group['hypergrad'] = -torch.dot(grad, grad_prev).item()
+        # Normalization
+        group['normalized_hypergrad'] = (group['hypergrad'] / (grad.norm() * grad_prev.norm() + 1e-12)).item()
         # Hypergradient descent of the learning rate:
-        group['lr'] += group['hypergrad_lr'] * h.item()
+        group['lr'] -= group['hypergrad_lr'] * group['hypergrad']
 
         if momentum != 0:
-            if 'momentum_buffer' not in state:
-                buf = state['momentum_buffer'] = torch.zeros_like(grad)
+            if 'momentum_buffer' not in group:
+                buf = group['momentum_buffer'] = torch.zeros_like(grad)
                 buf.mul_(momentum).add_(grad)
             else:
-                buf = state['momentum_buffer']
+                buf = group['momentum_buffer']
                 buf.mul_(momentum).add_(grad, alpha=1 - dampening)
             if nesterov:
                 grad.add_(buf, alpha=momentum)
             else:
                 grad = buf
 
-        state['grad_prev'] = grad
+        group['grad_prev'] = grad
 
         self._add_grad(-group['lr'], grad)
 
