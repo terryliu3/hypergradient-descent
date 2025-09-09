@@ -105,7 +105,7 @@ def create_model(model_name: str, use_cuda: bool = False, parallel: bool = False
 def create_optimizer(method: str, model_params, config: Dict[str, Any]):
     """Create optimizer based on method and config."""
     lr = config.get('lr', 0.001)
-    weight_decay = config.get('weight_decay', 0.0)
+    weight_decay = config.get('weight_decay', 1e-4)
     
     if method == 'sgd':
         return SGD(model_params, lr=lr, weight_decay=weight_decay)
@@ -223,7 +223,10 @@ def train(config: Optional[Dict[str, Any]] = None):
         config = default_config
     
     # Initialize wandb
-    wandb.init(project="parameter-free-hypergrad", config=config)
+    wandb.init(
+        project="parameter-free-hypergrad", 
+        config=config,
+        name=f"{config['model']}-{config['method']}")
     config = wandb.config
     
     # Set random seeds
@@ -377,29 +380,33 @@ def train(config: Optional[Dict[str, Any]] = None):
 def main():
     """Main function to run training with custom configuration."""
     config = {
-        'model': 'mlp',  # 'logreg', 'mlp', 'vgg'
-        'method': 'adam_hd_kt',  # 'sgd', 'sgd_hd', 'sgd_hd_kt', 'adam', 'adam_hd', 'adam_hd_kt', etc.
+        'model': 'logreg',  # 'logreg', 'mlp', 'vgg'
+        'method': 'sgd_hd',  # 'sgd', 'sgd_hd', 'sgd_hd_kt', 'adam', 'adam_hd', 'adam_hd_kt', etc.
         'lr': 0.001,
-        'weight_decay': 0.0001,
+        'hypergrad_lr': 1e-3,
         'batch_size': 128,
-        'epochs': 20,
-        'seed': 42,
-        
-        # Method-specific hyperparameters
-        'wealth': 1e-6,  # For KT methods
-        'hypergrad_lr': 1e-6,  # For HD methods
-        'momentum': 0.9,  # For SGD with momentum
-        'beta1': 0.9,  # For Adam
-        'beta2': 0.999,  # For Adam
-        'eps': 1e-8,  # For Adam
+        'epochs': 10,
+        'seed': 1,
+
+        # System settings
+        'use_cuda': torch.cuda.is_available(),
+        'device': 0,
+        'num_workers': 4,
+        'parallel': False,
+        # # Method-specific hyperparameters
+        # 'wealth': 1e-6,  # For KT methods
+        # 'hypergrad_lr': 1e-6,  # For HD methods
+        # 'momentum': 0.9,  # For SGD with momentum
+        # 'beta1': 0.9,  # For Adam
+        # 'beta2': 0.999,  # For Adam
+        # 'eps': 1e-8,  # For Adam
         
         # Training settings
-        'log_interval': 10,
+        'log_interval': 1,  # Log every N batches
         'early_stopping_patience': 5,
         'early_stopping_min_delta': 1e-4,
     }
-    
-    model = train()
+    model = train(config)
     return model
 
 
