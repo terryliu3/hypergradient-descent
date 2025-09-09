@@ -205,7 +205,7 @@ def train(config: Optional[Dict[str, Any]] = None):
         'model': 'logreg',
         'method': 'sgd_hd',
         'lr': 0.001,
-        'weight_decay': 0.0,
+        'weight_decay': 1e-4,
         'batch_size': 128,
         'epochs': 10,
         'seed': 1,
