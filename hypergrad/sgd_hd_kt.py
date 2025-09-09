@@ -54,7 +54,7 @@ class SGDHDKT(Optimizer):
     """
 
     def __init__(self, params, lr=required, momentum=0, dampening=0,
-                 weight_decay=0, nesterov=False, wealth=1e-6):
+                 weight_decay=0, nesterov=False, wealth=1e-2):
         defaults = dict(lr=lr, momentum=momentum, dampening=dampening,
                         weight_decay=weight_decay, nesterov=nesterov, wealth=wealth)
         if nesterov and (momentum <= 0 or dampening != 0):

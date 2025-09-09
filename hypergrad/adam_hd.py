@@ -51,6 +51,9 @@ class AdamHD(Optimizer):
         if 'step' not in group:
             group['step'] = 0  
         group['hypergrad'] = 0.0
+        group['squared_norm_u'] = 0.0
+        group['squared_norm_v'] = 0.0
+
         group['step'] += 1
         
         for p in group['params']:
@@ -75,11 +78,15 @@ class AdamHD(Optimizer):
             if group['weight_decay'] != 0:
                 grad = grad.add(p.data, alpha=group['weight_decay'])
             
+            # Hypergradient for Adam:
             prev_bias_correction1 = 1 - beta1 ** (group['step'] - 1)
             prev_bias_correction2 = 1 - beta2 ** (group['step'] - 1)
-            h = -torch.dot(grad.view(-1), torch.div(exp_avg, exp_avg_sq.sqrt().add_(group['eps'])).view(-1)) * math.sqrt(prev_bias_correction2) / (prev_bias_correction1 + group['eps'])
-            # Hypergradient for Adam:
+            u = grad.view(-1)
+            v = torch.div(exp_avg, exp_avg_sq.sqrt().add_(group['eps'])).view(-1) * math.sqrt(prev_bias_correction2) / (prev_bias_correction1 + group['eps'])
+            h = -torch.dot(u, v)             
             group['hypergrad'] += h.item()
+            group['squared_norm_u'] += (u.norm()**2).item()
+            group['squared_norm_v'] += (v.norm()**2).item()
             group['lr'] -= group['hypergrad_lr'] * h.item()
             
             # Decay the first and second moment running average coefficient
@@ -93,5 +100,7 @@ class AdamHD(Optimizer):
 
             p.data.addcdiv_(exp_avg, denom, value=-step_size)
         
+        group['normalized_hypergrad'] = group['hypergrad'] / math.sqrt(group['squared_norm_u'] * group['squared_norm_v'] + 1e-12)
+
         
         return loss

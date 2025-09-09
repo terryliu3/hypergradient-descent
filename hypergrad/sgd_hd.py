@@ -90,6 +90,7 @@ class SGDHD(Optimizer):
             offset += numel
         assert offset == self._params_numel
 
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -122,6 +123,7 @@ class SGDHD(Optimizer):
 
         # Hypergradient for SGD
         group['hypergrad'] = -torch.dot(grad, grad_prev).item()
+        # print(grad.norm().item(), grad_prev.norm().item())
         # Normalization
         group['normalized_hypergrad'] = (group['hypergrad'] / (grad.norm() * grad_prev.norm() + 1e-12)).item()
         # Hypergradient descent of the learning rate:
