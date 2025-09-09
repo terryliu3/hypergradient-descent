@@ -1,19 +1,15 @@
-import traceback
-import argparse
-import sys
 import os
-import csv
 import time
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import datasets, transforms
-import vgg
 from torch.utils.data import DataLoader
 from torch.optim import SGD, Adam
+import wandb
+from typing import Dict, Any, Optional
 from hypergrad import SGDHD, AdamHD, SGDHDKT, AdamHDKT
-
+import vgg
 
 class LogReg(nn.Module):
     def __init__(self, input_dim, output_dim):
@@ -42,224 +38,369 @@ class MLP(nn.Module):
         x = self.lin3(x)
         return x
 
+def get_data_loaders(model_name: str, batch_size: int = 128, num_workers: int = 4):
+    """Get data loaders based on model type."""
+    if model_name in ['logreg', 'mlp']:
+        # MNIST dataset
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+        
+        train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
+        valid_dataset = datasets.MNIST('./data', train=False, transform=transform)
+        
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
+        
+    elif model_name == 'vgg':
+        # CIFAR10 dataset
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+        
+        train_transform = transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, 4),
+            transforms.ToTensor(),
+            normalize,
+        ])
+        
+        valid_transform = transforms.Compose([
+            transforms.ToTensor(),
+            normalize,
+        ])
+        
+        train_dataset = datasets.CIFAR10(root='./data', train=True, 
+                                         transform=train_transform, download=True)
+        valid_dataset = datasets.CIFAR10(root='./data', train=False,
+                                         transform=valid_transform)
+        
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, 
+                                 shuffle=True, num_workers=num_workers, pin_memory=True)
+        valid_loader = DataLoader(valid_dataset, batch_size=batch_size,
+                                 shuffle=False, num_workers=num_workers, pin_memory=True)
+    else:
+        raise ValueError(f"Unknown model: {model_name}")
+    
+    return train_loader, valid_loader
 
-def train(opt, log_func=None):
-    torch.manual_seed(opt.seed)
-    if opt.cuda:
-        torch.cuda.set_device(opt.device)
-        torch.cuda.manual_seed(opt.seed)
-        torch.backends.cudnn.enabled = True
-
-    if opt.model == 'logreg':
+def create_model(model_name: str, use_cuda: bool = False, parallel: bool = False):
+    """Create model based on name."""
+    if model_name == 'logreg':
         model = LogReg(28 * 28, 10)
-    elif opt.model == 'mlp':
+    elif model_name == 'mlp':
         model = MLP(28 * 28, 1000, 10)
-    elif opt.model == 'vgg':
+    elif model_name == 'vgg':
         model = vgg.vgg16_bn()
-        if opt.parallel:
+        if parallel:
             model.features = torch.nn.DataParallel(model.features)
     else:
-        raise Exception('Unknown model: {}'.format(opt.model))
-
-    if opt.cuda:
+        raise ValueError(f"Unknown model: {model_name}")
+    
+    if use_cuda:
         model = model.cuda()
+    
+    return model
 
-    if opt.model == 'logreg' or opt.model == 'mlp':
-        task = 'MNIST'
-        train_loader = DataLoader(
-            datasets.MNIST('./data', train=True, download=True,
-                           transform=transforms.Compose([
-                               transforms.ToTensor(),
-                               transforms.Normalize((0.1307,), (0.3081,))
-                           ])),
-            batch_size=opt.batchSize, shuffle=True)
-        valid_loader = DataLoader(
-            datasets.MNIST('./data', train=False, transform=transforms.Compose([
-                               transforms.ToTensor(),
-                               transforms.Normalize((0.1307,), (0.3081,))
-                           ])),
-            batch_size=opt.batchSize, shuffle=False)
-    elif opt.model == 'vgg':
-        task = 'CIFAR10'
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
-        train_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10(root='./data', train=True, transform=transforms.Compose([
-                transforms.RandomHorizontalFlip(),
-                transforms.RandomCrop(32, 4),
-                transforms.ToTensor(),
-                normalize,
-            ]), download=True),
-            batch_size=opt.batchSize, shuffle=True,
-            num_workers=opt.workers, pin_memory=True)
-
-        valid_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10(root='./data', train=False, transform=transforms.Compose([
-                transforms.ToTensor(),
-                normalize,
-            ])),
-            batch_size=opt.batchSize, shuffle=False,
-            num_workers=opt.workers, pin_memory=True)
+def create_optimizer(method: str, model_params, config: Dict[str, Any]):
+    """Create optimizer based on method and config."""
+    lr = config.get('lr', 0.001)
+    weight_decay = config.get('weight_decay', 0.0)
+    
+    if method == 'sgd':
+        return SGD(model_params, lr=lr, weight_decay=weight_decay)
+    
+    elif method == 'sgd_hd':
+        hypergrad_lr = config.get('hypergrad_lr', 1e-3)
+        return SGDHD(model_params, lr=lr, weight_decay=weight_decay, 
+                     hypergrad_lr=hypergrad_lr)
+    
+    elif method == 'sgd_hd_kt':
+        wealth = config.get('wealth', 1e-2)
+        return SGDHDKT(model_params, lr=lr, weight_decay=weight_decay, 
+                       wealth=wealth)
+    
+    elif method == 'sgdn':
+        momentum = config.get('momentum', 0.9)
+        return SGD(model_params, lr=lr, weight_decay=weight_decay, 
+                   momentum=momentum, nesterov=True)
+    
+    elif method == 'sgdn_hd':
+        momentum = config.get('momentum', 0.9)
+        hypergrad_lr = config.get('hypergrad_lr', 1e-6)
+        return SGDHD(model_params, lr=lr, weight_decay=weight_decay, 
+                     momentum=momentum, nesterov=True, hypergrad_lr=hypergrad_lr)
+    
+    elif method == 'sgdn_hd_kt':
+        momentum = config.get('momentum', 0.9)
+        wealth = config.get('wealth', 1e-2)
+        return SGDHDKT(model_params, lr=lr, weight_decay=weight_decay,
+                       momentum=momentum, nesterov=True, wealth=wealth)
+    
+    elif method == 'adam':
+        return Adam(model_params, lr=lr, weight_decay=weight_decay)
+    
+    elif method == 'adam_hd':
+        hypergrad_lr = config.get('hypergrad_lr', 1e-7)
+        return AdamHD(model_params, lr=lr, weight_decay=weight_decay, hypergrad_lr=hypergrad_lr)
+    
+    elif method == 'adam_hd_kt':
+        wealth = config.get('wealth', 1e-2)
+        return AdamHDKT(model_params, lr=lr, weight_decay=weight_decay, wealth=wealth)
     else:
-        raise Exception('Unknown model: {}'.format(opt.model))
+        raise ValueError(f"Unknown method: {method}")
 
-    if opt.method == 'sgd':
-        optimizer = SGD(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay)
-    elif opt.method == 'sgd_hd':
-        optimizer = SGDHD(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, hypergrad_lr=opt.beta)
-    elif opt.method == 'sgd_hd_kt':
-        optimizer = SGDHDKT(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, wealth=opt.beta)
-    elif opt.method == 'sgdn':
-        optimizer = SGD(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, momentum=opt.mu, nesterov=True)
-    elif opt.method == 'sgdn_hd':
-        optimizer = SGDHD(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, momentum=opt.mu, nesterov=True, hypergrad_lr=opt.beta)
-    elif opt.method == 'sgdn_hd_kt':
-        optimizer = SGDHDKT(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay,momentum=opt.mu, nesterov=True, wealth=opt.beta)
-    elif opt.method == 'adam':
-        optimizer = Adam(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay)
-    elif opt.method == 'adam_hd':
-        optimizer = AdamHD(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, hypergrad_lr=opt.beta)
-    elif opt.method == 'adam_hd_kt':
-        optimizer = AdamHDKT(model.parameters(), lr=opt.alpha_0, weight_decay=opt.weightDecay, wealth=opt.beta)
-    else:
-        raise Exception('Unknown method: {}'.format(opt.method))
-
-    if not opt.silent:
-        print('Task: {}, Model: {}, Method: {}'.format(task, opt.model, opt.method))
-
+def evaluate(model, data_loader, criterion, device):
+    """Evaluate model on given data loader."""
     model.eval()
+    total_loss = 0
+    correct = 0
+    total = 0
+    
     with torch.no_grad():
-        for batch_id, (data, target) in enumerate(train_loader):
-            if opt.cuda:
-                data, target = data.cuda(), target.cuda()
+        for data, target in data_loader:
+            data, target = data.to(device), target.to(device)
             output = model(data)
-            loss = F.cross_entropy(output, target).item()
-            break
-        valid_loss = 0
-        for data, target in valid_loader:
-            if opt.cuda:
-                data, target = data.cuda(), target.cuda()
-            output = model(data)
-            valid_loss += F.cross_entropy(output, target, reduction='sum').item()
-        valid_loss /= len(valid_loader.dataset)
-    if log_func is not None:
-        log_func(0, 0, 0, loss, loss, valid_loss, opt.alpha_0, opt.alpha_0, opt.beta)
+            total_loss += criterion(output, target, reduction='sum').item()
+            pred = output.argmax(dim=1, keepdim=True)
+            correct += pred.eq(target.view_as(pred)).sum().item()
+            total += target.size(0)
+    
+    avg_loss = total_loss / total
+    accuracy = correct / total
+    return avg_loss, accuracy
 
-    time_start = time.time()
-    iteration = 1
-    epoch = 1
-    done = False
-    while not done:
+def get_optimizer_stats(optimizer, method: str):
+    """Log optimizer-specific statistics to wandb."""
+    stats = {}
+    group = optimizer.param_groups[0]
+    
+    # Common stats
+    stats['lr'] = group['lr']
+    
+    # Method-specific stats
+    if 'hd' in method:
+        if 'hypergrad' in group:
+            stats['hypergrad'] = group.get('hypergrad', 0)
+        if 'normalized_hypergrad' in group:
+            stats['normalized_hypergrad'] = group.get('normalized_hypergrad', 0)
+    
+    if 'kt' in method:
+        if 'wealth' in group:
+            stats['wealth'] = group.get('wealth', 0)
+        if 'sum_of_normalized_hypergrads' in group:
+            stats['sum_of_normalized_hypergrads'] = group.get('sum_of_normalized_hypergrads', 0)
+    
+    return stats
+
+def train(config: Optional[Dict[str, Any]] = None):
+    """
+    Main training function.
+    
+    Args:
+        config: Configuration dictionary. If None, uses default values.
+    """
+    # Default configuration
+    default_config = {
+        'model': 'logreg',
+        'method': 'sgd_hd',
+        'lr': 0.001,
+        'weight_decay': 0.0,
+        'batch_size': 128,
+        'epochs': 10,
+        'seed': 1,
+        'use_cuda': torch.cuda.is_available(),
+        'device': 0,
+        'num_workers': 4,
+        'parallel': False,
+        'log_interval': 1,  # Log every N batches
+        'early_stopping_patience': 5,
+        'early_stopping_min_delta': 1e-4
+    }
+    
+    # Merge with provided config
+    if config is None:
+        config = default_config
+    
+    # Initialize wandb
+    wandb.init(project="parameter-free-hypergrad", config=config)
+    config = wandb.config
+    
+    # Set random seeds
+    torch.manual_seed(config.seed)
+    if config.use_cuda:
+        torch.cuda.manual_seed(config.seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+     
+    # Setup device
+    device = torch.device(f"cuda:{config.device}" if config.use_cuda else "cpu")
+    
+    # Create model
+    model = create_model(config.model, config.use_cuda, config.parallel)
+    wandb.watch(model, log="all", log_freq=100)
+    
+    # Create data loaders
+    train_loader, valid_loader = get_data_loaders(
+        config.model, config.batch_size, config.num_workers
+    )
+    
+    # Create optimizer
+    optimizer = create_optimizer(config.method, model.parameters(), dict(config))
+    
+    # Loss function
+    criterion = F.cross_entropy
+    
+    # Training metrics
+    best_valid_loss = float('inf')
+    patience_counter = 0
+    
+    # Log initial metrics
+    initial_train_loss, initial_train_acc = evaluate(model, train_loader, criterion, device)
+    initial_valid_loss, initial_valid_acc = evaluate(model, valid_loader, criterion, device)
+    
+    wandb.log({
+        'epoch': 0,
+        'train/loss': initial_train_loss,
+        'train/accuracy': initial_train_acc,
+        'valid/loss': initial_valid_loss,
+        'valid/accuracy': initial_valid_acc,
+    })
+    
+    print(f"Initial - Train Loss: {initial_train_loss:.4f}, Train Acc: {initial_train_acc:.4f}, "
+          f"Valid Loss: {initial_valid_loss:.4f}, Valid Acc: {initial_valid_acc:.4f}")
+    
+    # Training loop
+    global_step = 0
+    start_time = time.time()
+    
+    for epoch in range(1, config.epochs + 1):
         model.train()
-        loss_epoch = 0
-        alpha_epoch = 0
-        for batch_id, (data, target) in enumerate(train_loader):
-            if opt.cuda:
-                data, target = data.cuda(), target.cuda()
+        epoch_train_loss = 0
+        epoch_train_correct = 0
+        epoch_train_total = 0
+        
+        for batch_idx, (data, target) in enumerate(train_loader):
+            data, target = data.to(device), target.to(device)
+            
             optimizer.zero_grad()
             output = model(data)
-            loss = F.cross_entropy(output, target)
+            loss = criterion(output, target)
             loss.backward()
             optimizer.step()
-            loss = loss.item()
-            loss_epoch += loss
-            alpha = optimizer.param_groups[0]['lr']
-            alpha_epoch += alpha
-            iteration += 1
-            if opt.iterations != 0:
-                if iteration > opt.iterations:
-                    print('Early stopping: iteration > {}'.format(opt.iterations))
-                    done = True
-                    break
-            if opt.lossThreshold >= 0:
-                if loss <= opt.lossThreshold:
-                    print('Early stopping: loss <= {}'.format(opt.lossThreshold))
-                    done = True
-                    break
-
-            if batch_id + 1 >= len(train_loader):
-                loss_epoch /= len(train_loader)
-                alpha_epoch /= len(train_loader)
-                model.eval()
-                valid_loss = 0
-                with torch.no_grad():
-                    for data, target in valid_loader:
-                        if opt.cuda:
-                            data, target = data.cuda(), target.cuda()
-                        output = model(data)
-                        valid_loss += F.cross_entropy(output, target, reduction='sum').item()
-                    valid_loss /= len(valid_loader.dataset)
-                if log_func is not None:
-                    log_func(epoch, iteration, time.time() - time_start, loss, loss_epoch, valid_loss, alpha, alpha_epoch, opt.beta)
-            else:
-                if log_func is not None:
-                    log_func(epoch, iteration, time.time() - time_start, loss, float('nan'), float('nan'), alpha, float('nan'), opt.beta)
-
-        epoch += 1
-        if opt.epochs != 0:
-            if epoch > opt.epochs:
-                print('Early stopping: epoch > {}'.format(opt.epochs))
-                done = True
-    return loss, iteration
-
+            
+            # Calculate batch metrics
+            pred = output.argmax(dim=1, keepdim=True)
+            correct = pred.eq(target.view_as(pred)).sum().item()
+            
+            epoch_train_loss += loss.item() * target.size(0)
+            epoch_train_correct += correct
+            epoch_train_total += target.size(0)
+            
+            global_step += 1
+            
+            # Log batch metrics
+            if batch_idx % config.log_interval == 0:
+                batch_accuracy = correct / target.size(0)
+                optimizer_stats = get_optimizer_stats(optimizer, config.method)
+                
+                wandb.log({
+                    'batch/loss': loss.item(),
+                    'batch/accuracy': batch_accuracy,
+                    'batch/step': global_step,
+                    **{f'optimizer/{k}': v for k, v in optimizer_stats.items()}
+                })
+                
+                if batch_idx % (config.log_interval * 10) == 0:
+                    print(f"Epoch {epoch} [{batch_idx}/{len(train_loader)}] "
+                          f"Loss: {loss.item():.4f}, Acc: {batch_accuracy:.4f}, "
+                          f"LR: {optimizer_stats['lr']:.6f}")
+        
+        # Calculate epoch metrics
+        avg_train_loss = epoch_train_loss / epoch_train_total
+        avg_train_acc = epoch_train_correct / epoch_train_total
+        
+        # Validation
+        valid_loss, valid_acc = evaluate(model, valid_loader, criterion, device)
+        
+        # Log epoch metrics
+        elapsed_time = time.time() - start_time
+        optimizer_stats = get_optimizer_stats(optimizer, config.method)
+        
+        wandb.log({
+            'epoch': epoch,
+            'train/loss': avg_train_loss,
+            'train/accuracy': avg_train_acc,
+            'valid/loss': valid_loss,
+            'valid/accuracy': valid_acc,
+            'time/elapsed': elapsed_time,
+            'time/per_epoch': elapsed_time / epoch,
+            **{f'optimizer/epoch_{k}': v for k, v in optimizer_stats.items()}
+        })
+        
+        print(f"Epoch {epoch}/{config.epochs} - "
+              f"Train Loss: {avg_train_loss:.4f}, Train Acc: {avg_train_acc:.4f}, "
+              f"Valid Loss: {valid_loss:.4f}, Valid Acc: {valid_acc:.4f}, "
+              f"Time: {elapsed_time:.1f}s")
+        
+        # Early stopping
+        if valid_loss < best_valid_loss - config.early_stopping_min_delta:
+            best_valid_loss = valid_loss
+            patience_counter = 0
+            # Save best model
+            wandb.run.summary["best_valid_loss"] = valid_loss
+            wandb.run.summary["best_valid_accuracy"] = valid_acc
+            wandb.run.summary["best_epoch"] = epoch
+        else:
+            patience_counter += 1
+            if patience_counter >= config.early_stopping_patience:
+                print(f"Early stopping at epoch {epoch}")
+                break
+    
+    # Final evaluation
+    final_train_loss, final_train_acc = evaluate(model, train_loader, criterion, device)
+    final_valid_loss, final_valid_acc = evaluate(model, valid_loader, criterion, device)
+    
+    wandb.run.summary["final_train_loss"] = final_train_loss
+    wandb.run.summary["final_train_accuracy"] = final_train_acc
+    wandb.run.summary["final_valid_loss"] = final_valid_loss
+    wandb.run.summary["final_valid_accuracy"] = final_valid_acc
+    wandb.run.summary["total_time"] = time.time() - start_time
+    
+    print(f"\nTraining completed!")
+    print(f"Final - Train Loss: {final_train_loss:.4f}, Train Acc: {final_train_acc:.4f}, "
+          f"Valid Loss: {final_valid_loss:.4f}, Valid Acc: {final_valid_acc:.4f}")
+    
+    wandb.finish()
+    return model
 
 def main():
-    try:
-        parser = argparse.ArgumentParser(description='Hypergradient descent PyTorch tests', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-        parser.add_argument('--cuda', help='use CUDA', action='store_true')
-        parser.add_argument('--device', help='selected CUDA device', default=0, type=int)
-        parser.add_argument('--seed', help='random seed', default=1, type=int)
-        parser.add_argument('--dir', help='directory to write the output files', default='results', type=str)
-        parser.add_argument('--model', help='model (logreg, mlp, vgg)', default='logreg', type=str)
-        parser.add_argument('--method', help='method (sgd, sgd_hd, sgdn, sgdn_hd, adam, adam_hd)', default='adam', type=str)
-        parser.add_argument('--alpha_0', help='initial learning rate', default=0.001, type=float)
-        parser.add_argument('--beta', help='learning learning rate', default=0.000001, type=float)
-        parser.add_argument('--mu', help='momentum', default=0.9, type=float)
-        parser.add_argument('--weightDecay', help='regularization', default=0.0001, type=float)
-        parser.add_argument('--batchSize', help='minibatch size', default=128, type=int)
-        parser.add_argument('--epochs', help='stop after this many epochs (0: disregard)', default=2, type=int)
-        parser.add_argument('--iterations', help='stop after this many iterations (0: disregard)', default=0, type=int)
-        parser.add_argument('--lossThreshold', help='stop after reaching this loss (0: disregard)', default=0, type=float)
-        parser.add_argument('--silent', help='do not print output', action='store_true')
-        parser.add_argument('--workers', help='number of data loading workers', default=4, type=int)
-        parser.add_argument('--parallel', help='parallelize', action='store_true')
-        parser.add_argument('--save', help='do not save output to file', action='store_true')
-
-        opt = parser.parse_args()
-
-        torch.manual_seed(opt.seed)
-        if opt.cuda:
-            torch.cuda.set_device(opt.device)
-            torch.cuda.manual_seed(opt.seed)
-            torch.backends.cudnn.enabled = True
-
-        file_name = '{}/{}/{:+.0e}_{:+.0e}/{}.csv'.format(opt.dir, opt.model, opt.alpha_0, opt.beta, opt.method)
-        os.makedirs(os.path.dirname(file_name), exist_ok=True)
-        if not opt.silent:
-            print('Output file: {}'.format(file_name))
-        # if os.path.isfile(file_name):
-        #     print('File with previous results exists, skipping...')
-        # else:
-        if not opt.save:
-            def log_func(epoch, iteration, time_spent, loss, loss_epoch, valid_loss, alpha, alpha_epoch, beta):
-                if not opt.silent:
-                    print('{} | {} | Epoch: {} | Iter: {} | Time: {:+.3e} | Loss: {:+.3e} | Valid. loss: {:+.3e} | Alpha: {:+.3e} | Beta: {:+.3e}'.format(opt.model, opt.method, epoch, iteration, time_spent, loss, valid_loss, alpha, beta))
-            train(opt, log_func)
-        else:
-            with open(file_name, 'w') as f:
-                writer = csv.writer(f)
-                writer.writerow(['Epoch', 'Iteration', 'Time', 'Loss', 'LossEpoch', 'ValidLossEpoch', 'Alpha', 'AlphaEpoch', 'Beta'])
-                def log_func(epoch, iteration, time_spent, loss, loss_epoch, valid_loss, alpha, alpha_epoch, beta):
-                    writer.writerow([epoch, iteration, time_spent, loss, loss_epoch, valid_loss, alpha, alpha_epoch, beta])
-                    if not opt.silent:
-                        print('{} | {} | Epoch: {} | Iter: {} | Time: {:+.3e} | Loss: {:+.3e} | Valid. loss: {:+.3e} | Alpha: {:+.3e} | Beta: {:+.3e}'.format(opt.model, opt.method, epoch, iteration, time_spent, loss, valid_loss, alpha, beta))
-                train(opt, log_func)
-
-    except KeyboardInterrupt:
-        print('Stopped')
-    except Exception:
-        traceback.print_exc(file=sys.stdout)
-    sys.exit(0)
+    """Main function to run training with custom configuration."""
+    config = {
+        'model': 'mlp',  # 'logreg', 'mlp', 'vgg'
+        'method': 'adam_hd_kt',  # 'sgd', 'sgd_hd', 'sgd_hd_kt', 'adam', 'adam_hd', 'adam_hd_kt', etc.
+        'lr': 0.001,
+        'weight_decay': 0.0001,
+        'batch_size': 128,
+        'epochs': 20,
+        'seed': 42,
+        
+        # Method-specific hyperparameters
+        'wealth': 1e-6,  # For KT methods
+        'hypergrad_lr': 1e-6,  # For HD methods
+        'momentum': 0.9,  # For SGD with momentum
+        'beta1': 0.9,  # For Adam
+        'beta2': 0.999,  # For Adam
+        'eps': 1e-8,  # For Adam
+        
+        # Training settings
+        'log_interval': 10,
+        'early_stopping_patience': 5,
+        'early_stopping_min_delta': 1e-4,
+    }
+    
+    model = train()
+    return model
 
 
 if __name__ == "__main__":
