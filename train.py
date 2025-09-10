@@ -180,10 +180,10 @@ def get_optimizer_stats(optimizer, method: str):
     
     # Method-specific stats
     if 'hd' in method:
-        if 'hypergrad' in group:
-            stats['hypergrad'] = group.get('hypergrad', 0)
-        if 'normalized_hypergrad' in group:
-            stats['normalized_hypergrad'] = group.get('normalized_hypergrad', 0)
+        stats['hypergrad'] = group.get('hypergrad', 0)
+        stats['norm_u'] = group.get('squared_norm_u', 0)**0.5
+        stats['norm_v'] = group.get('squared_norm_v', 0)**0.5
+        stats['normalized_hypergrad'] = group.get('normalized_hypergrad', 0)
     
     if 'kt' in method:
         if 'wealth' in group:

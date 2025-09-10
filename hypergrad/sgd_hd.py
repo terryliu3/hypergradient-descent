@@ -120,9 +120,10 @@ class SGDHD(Optimizer):
             group['grad_prev'] = torch.zeros_like(grad)
 
         grad_prev = group['grad_prev']
-
         # Hypergradient for SGD
         group['hypergrad'] = -torch.dot(grad, grad_prev).item()
+        group['squared_norm_u'] = (grad.norm()**2).item()
+        group['squared_norm_v'] = (grad_prev.norm()**2).item()
         # print(grad.norm().item(), grad_prev.norm().item())
         # Normalization
         group['normalized_hypergrad'] = (group['hypergrad'] / (grad.norm() * grad_prev.norm() + 1e-12)).item()
