@@ -1,4 +1,3 @@
-import wandb
 import torch
 from train import train
 
@@ -10,10 +9,10 @@ hypergrad_lrs = [1e-3, 1e-7, 1e-8]
 epochs = [10, 100]
 
 config_template = {
+    'lr': 1e-3,
     'batch_size': 128,
     'seed': 1,
-    'lr': 1e-3,
-    
+
     # System settings
     'use_cuda': torch.cuda.is_available(),
     'device': 0,
@@ -21,7 +20,7 @@ config_template = {
     'parallel': False,
     
     # Training settings
-    # 'log_interval': 1,  # Log every N batches
+    'log_interval': 1  # Log every N batches
     # 'early_stopping_patience': 5,
     # 'early_stopping_min_delta': 1e-4,
 }
@@ -47,7 +46,7 @@ for model in models:
             else:
                 hypergrad_lr = 1e-7
             config['hypergrad_lr'] = hypergrad_lr
-        
+        print(f"Training {model} with {method} for {epoch} epochs")
         train(config)
             
            
