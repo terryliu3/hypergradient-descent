@@ -17,9 +17,9 @@
 #SBATCH --nodes=1                     # Run on a single node
 #SBATCH --ntasks=1                    # Run a single task
 #SBATCH --cpus-per-task=4             # Number of CPU cores per task
-#SBATCH --mem=16G                     # Job memory request
-#SBATCH --time=00:20:00               # Time limit hrs:min:sec
-#SBATCH --gres=gpu:p100:1             # Request 1 GPU for the job
+#SBATCH --mem=32G                     # Job memory request
+#SBATCH --time=01:00:00               # Time limit hrs:min:sec
+#SBATCH --gres=gpu:v100:1             # Request 1 GPU for the job
 
 
 # --- Environment Setup ---
@@ -44,4 +44,23 @@ module load cuda
 # # You will need to create one that accepts arguments for model, optimizer, etc.,
 # # and saves results to CSV files as expected by 'plot.py'.
 # python train.py --model "$MODEL" --method "$CURRENT_OPTIMIZER" --epochs 50 --dir "results" --save --cuda --workers 3
-python train.py --cuda --workers 3 --model logreg --method sgd --save --epochs 10 --alpha_0 0.001 --beta 0.001
+# python train.py --cuda --workers 3 --model logreg --method sgd --save --epochs 10 --alpha_0 0.001 --beta 0.001
+# python train.py --cuda --workers 3 --model logreg --method sgd_hd  --save --epochs 10 --alpha_0 0.001 --beta 0.001
+# python train.py --cuda --workers 3 --model logreg --method sgdn    --save --epochs 10 --alpha_0 0.001 --beta 0.001
+# python train.py --cuda --workers 3 --model logreg --method sgdn_hd --save --epochs 10 --alpha_0 0.001 --beta 0.001
+# python train.py --cuda --workers 3 --model logreg --method adam    --save --epochs 10 --alpha_0 0.001 --beta 1e-7
+# python train.py --cuda --workers 3 --model logreg --method adam_hd --save --epochs 10 --alpha_0 0.001 --beta 1e-7
+
+# python train.py --cuda --model mlp --method sgd     --save --epochs 100 --alpha_0 0.001 --beta 0.001
+# python train.py --cuda --model mlp --method sgd_hd  --save --epochs 100 --alpha_0 0.001 --beta 0.001
+# python train.py --cuda --model mlp --method sgdn    --save --epochs 100 --alpha_0 0.001 --beta 0.001
+# python train.py --cuda --model mlp --method sgdn_hd --save --epochs 100 --alpha_0 0.001 --beta 0.001
+# python train.py --cuda --model mlp --method adam    --save --epochs 100 --alpha_0 0.001 --beta 1e-7
+# python train.py --cuda --model mlp --method adam_hd --save --epochs 100 --alpha_0 0.001 --beta 1e-7
+
+python train.py --cuda --model vgg --method sgd     --save --epochs 100 --alpha_0 0.001 --beta 0.001
+python train.py --cuda --model vgg --method sgd_hd  --save --epochs 100 --alpha_0 0.001 --beta 0.001
+python train.py --cuda --model vgg --method sgdn    --save --epochs 100 --alpha_0 0.001 --beta 0.001
+python train.py --cuda --model vgg --method sgdn_hd --save --epochs 100 --alpha_0 0.001 --beta 0.001
+python train.py --cuda --model vgg --method adam    --save --epochs 100 --alpha_0 0.001 --beta 1e-8
+python train.py --cuda --model vgg --method adam_hd --save --epochs 100 --alpha_0 0.001 --beta 1e-8
