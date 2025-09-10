@@ -214,8 +214,8 @@ def train(config: Optional[Dict[str, Any]] = None):
         'num_workers': 4,
         'parallel': False,
         'log_interval': 1,  # Log every N batches
-        'early_stopping_patience': 5,
-        'early_stopping_min_delta': 1e-4
+        # 'early_stopping_patience': 5,
+        # 'early_stopping_min_delta': 1e-4
     }
     
     # Merge with provided config
@@ -255,8 +255,8 @@ def train(config: Optional[Dict[str, Any]] = None):
     criterion = F.cross_entropy
     
     # Training metrics
-    best_valid_loss = float('inf')
-    patience_counter = 0
+    # best_valid_loss = float('inf')
+    # patience_counter = 0
     
     # Log initial metrics
     initial_train_loss, initial_train_acc = evaluate(model, train_loader, criterion, device)
@@ -277,7 +277,7 @@ def train(config: Optional[Dict[str, Any]] = None):
     global_step = 0
     start_time = time.time()
     
-    # i = 0
+    i = 0
     for epoch in range(1, config.epochs + 1):
         model.train()
         epoch_train_loss = 0
@@ -291,17 +291,17 @@ def train(config: Optional[Dict[str, Any]] = None):
             output = model(data)
             loss = criterion(output, target)
             loss.backward()
-            # if i < 6:
-            #     i += 1
-            #     for name, p in model.named_parameters():
-            #         print(name, torch.sum(p).item(), torch.norm(p).item())
+            if i < 6:
+                i += 1
+                for name, p in model.named_parameters():
+                    print(name, torch.sum(p).item(), torch.norm(p).item())
                     
-            #     print('prediction:', output.norm().item())
-            #     print('loss:', loss.item())
-            #     print('gradients:')
-            #     for name, p in model.named_parameters():
-            #         if p.grad is not None:
-            #             print(name, torch.sum(p.grad).item(), torch.norm(p.grad).item())
+                print('prediction:', output.norm().item())
+                print('loss:', loss.item())
+                print('gradients:')
+                for name, p in model.named_parameters():
+                    if p.grad is not None:
+                        print(name, torch.sum(p.grad).item(), torch.norm(p.grad).item())
             optimizer.step()
             
             # Calculate batch metrics
@@ -359,18 +359,18 @@ def train(config: Optional[Dict[str, Any]] = None):
               f"Time: {elapsed_time:.1f}s")
         
         # Early stopping
-        if valid_loss < best_valid_loss - config.early_stopping_min_delta:
-            best_valid_loss = valid_loss
-            patience_counter = 0
-            # Save best model
-            wandb.run.summary["best_valid_loss"] = valid_loss
-            wandb.run.summary["best_valid_accuracy"] = valid_acc
-            wandb.run.summary["best_epoch"] = epoch
-        else:
-            patience_counter += 1
-            if patience_counter >= config.early_stopping_patience:
-                print(f"Early stopping at epoch {epoch}")
-                break
+        # if valid_loss < best_valid_loss - config.early_stopping_min_delta:
+        #     best_valid_loss = valid_loss
+        #     patience_counter = 0
+        #     # Save best model
+        #     wandb.run.summary["best_valid_loss"] = valid_loss
+        #     wandb.run.summary["best_valid_accuracy"] = valid_acc
+        #     wandb.run.summary["best_epoch"] = epoch
+        # else:
+        #     patience_counter += 1
+        #     if patience_counter >= config.early_stopping_patience:
+        #         print(f"Early stopping at epoch {epoch}")
+        #         break
     
     # Final evaluation
     final_train_loss, final_train_acc = evaluate(model, train_loader, criterion, device)
@@ -392,10 +392,10 @@ def train(config: Optional[Dict[str, Any]] = None):
 def main():
     """Main function to run training with custom configuration."""
     config = {
-        'model': 'logreg',  # 'logreg', 'mlp', 'vgg'
+        'model': 'mlp',  # 'logreg', 'mlp', 'vgg'
         'method': 'adam_hd',  # 'sgd', 'sgd_hd', 'sgd_hd_kt', 'adam', 'adam_hd', 'adam_hd_kt', etc.
         'lr': 0.001,
-        # 'hypergrad_lr': 1e-3,
+        'hypergrad_lr': 1e-7,
         'batch_size': 128,
         'epochs': 10,
         'seed': 1,
@@ -415,8 +415,8 @@ def main():
         
         # Training settings
         'log_interval': 1,  # Log every N batches
-        'early_stopping_patience': 5,
-        'early_stopping_min_delta': 1e-4,
+        # 'early_stopping_patience': 5,
+        # 'early_stopping_min_delta': 1e-4,
     }
     model = train(config)
     return model

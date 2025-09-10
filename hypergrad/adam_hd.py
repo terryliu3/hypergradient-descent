@@ -102,5 +102,4 @@ class AdamHD(Optimizer):
         
         group['normalized_hypergrad'] = group['hypergrad'] / math.sqrt(group['squared_norm_u'] * group['squared_norm_v'] + 1e-12)
 
-        
         return loss
