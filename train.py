@@ -225,8 +225,10 @@ def train(config: Optional[Dict[str, Any]] = None):
     # Initialize wandb
     wandb.init(
         project="parameter-free-hypergrad", 
-        config=config,
-        name=f"{config['model']}-{config['method']}-ibex")
+        config=config)
+    
+    wandb.run.name = f"{wandb.config.model}-{wandb.config.method}"
+    wandb.run.save()
     config = wandb.config
     
     # Set random seeds
